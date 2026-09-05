@@ -25,6 +25,11 @@ _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+\S")
 _SETEXT = re.compile(r"^\s{0,3}(=+|-{2,})\s*$")
 
 MAX_CHUNK_CHARS = 1800
+# A hard ceiling on any single chunk, independent of line structure. One
+# unbroken line - a minified bundle, a generated JSON blob, a log line - is a
+# whole "section" to a line-oriented splitter, and handing FTS5 a multi-megabyte
+# chunk makes snippet() spend minutes on a query that should take milliseconds.
+MAX_ANY_CHUNK_CHARS = 4000
 OVERLAP_LINES = 3
 MIN_SECTION_CHARS = 200
 
@@ -49,6 +54,7 @@ def _flush(buf: list[str], start_line: int, out: list[tuple[int, str]]) -> None:
         out.append((start_line, text))
         return
 
+
     total = len(buf)
     index = 0
     while index < total:
@@ -62,11 +68,25 @@ def _flush(buf: list[str], start_line: int, out: list[tuple[int, str]]) -> None:
             size += len(buf[cursor]) + 1
             cursor += 1
         body = "\n".join(piece).strip()
-        if body:
-            out.append((start_line + index, body))
+        for part in _slice(body):
+            # An oversized single line is emitted in pieces, every one carrying
+            # the line it started on, because that is where a reader has to go.
+            out.append((start_line + index, part))
         if cursor >= total:
             break
         index = max(cursor - OVERLAP_LINES, index + 1)
+
+
+def _slice(body: str) -> list[str]:
+    """Cut a body down to something neither a ranker nor a reader chokes on."""
+    if not body:
+        return []
+    if len(body) <= MAX_ANY_CHUNK_CHARS:
+        return [body]
+    return [
+        body[at:at + MAX_ANY_CHUNK_CHARS]
+        for at in range(0, len(body), MAX_ANY_CHUNK_CHARS)
+    ]
 
 
 def chunk_markdown(text: str) -> list[tuple[int, str]]:

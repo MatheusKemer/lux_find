@@ -11,7 +11,7 @@ your editor stops at the current project.
 
 `lux_find` indexes all of it into one SQLite FTS5 database and answers in
 milliseconds. It is about 2,400 lines of standard-library Python — comments and
-docstrings included — with 131 tests and zero runtime dependencies. You can read
+docstrings included — with 133 tests and zero runtime dependencies. You can read
 all of it in an afternoon, which is the point: this is infrastructure you should
 be able to audit before pointing it at your private files.
 
@@ -252,6 +252,10 @@ are more selective and will usually be faster.
 |---|---|---|---|---|---|
 | 5,000 docs / 17,500 chunks | 27 MB | 0.8 s | 0.14 s | **23 ms** | 27 ms |
 | 20,000 docs / 70,000 chunks | 109 MB | 3.0 s | 0.42 s | **54 ms** | 61 ms |
+
+Query time grows with the size of the corpus rather than staying flat, and the
+first query after a fresh build pays a one-off disk-cache cost. Both are visible
+in the header `find` prints, which is the point of printing it.
 
 You do not need a benchmark harness to check this on your own corpus: `index`
 prints its own elapsed time, `find` prints the query time in its header, and

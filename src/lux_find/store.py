@@ -144,11 +144,15 @@ def open_db(path: Path, *, create: bool = False) -> sqlite3.Connection:
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA busy_timeout=30000")
         if create:
+            existing = _schema_version_of(con)
             con.executescript(SCHEMA)
-            con.execute(
-                "INSERT OR REPLACE INTO meta(k,v) VALUES('schema_version',?)",
-                (str(SCHEMA_VERSION),),
-            )
+            if existing == 0:
+                # Brand new index. Stamping an index that already existed would
+                # overwrite the one fact that says it needs rebuilding.
+                con.execute(
+                    "INSERT OR REPLACE INTO meta(k,v) VALUES('schema_version',?)",
+                    (str(SCHEMA_VERSION),),
+                )
             con.commit()
             _harden(path)
         else:
@@ -167,6 +171,46 @@ def open_db(path: Path, *, create: bool = False) -> sqlite3.Connection:
     except sqlite3.DatabaseError as exc:
         raise IndexCorrupt(f"index at {path} is unreadable: {exc}") from exc
     return con
+
+
+def _schema_version_of(con: sqlite3.Connection) -> int:
+    """The schema version recorded in the index, or 0 when it predates the field."""
+    try:
+        row = con.execute("SELECT v FROM meta WHERE k='schema_version'").fetchone()
+    except sqlite3.DatabaseError:
+        return 0
+    try:
+        return int(row["v"]) if row else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _schema_is_current(con: sqlite3.Connection) -> bool:
+    """Is this index the shape this build knows how to write?
+
+    Both halves matter. The recorded version catches a deliberate change; the
+    table shape catches an index whose version was stamped by mistake, and it is
+    the half that cannot be wrong.
+    """
+    if _schema_version_of(con) != SCHEMA_VERSION:
+        return False
+    try:
+        columns = {row["name"] for row in con.execute("PRAGMA table_info(chunks)")}
+    except sqlite3.DatabaseError:
+        return False
+    return {"id", "doc_id", "line", "body", "title"} <= columns
+
+
+def _reset_schema(con: sqlite3.Connection) -> None:
+    """Remove the derived tables and lay the current schema down again."""
+    for table in ("chunk_fts", "chunks", "docs"):
+        con.execute(f"DROP TABLE IF EXISTS {table}")
+    con.executescript(SCHEMA)
+    con.execute(
+        "INSERT OR REPLACE INTO meta(k,v) VALUES('schema_version',?)",
+        (str(SCHEMA_VERSION),),
+    )
+    con.commit()
 
 
 def _check_schema(con: sqlite3.Connection, path: Path) -> None:
@@ -289,6 +333,16 @@ def build(
     stats = BuildStats(sources=len(config.sources))
     started = time.time()
     con = open_db(config.db_path, create=True)
+    # An index written by an older build has an older shape, and CREATE TABLE
+    # IF NOT EXISTS will not reshape it. `find` tells the user to rebuild with
+    # --full; the rebuild command itself must not be the thing that crashes, so
+    # it simply does the rebuild. The index is a derived cache - every document
+    # in it is still on disk, so remaking it costs time and nothing else.
+    if not _schema_is_current(con):
+        if progress:
+            progress("index was built by an older version - rebuilding from scratch")
+        _reset_schema(con)
+        full = True
     try:
         _build_into(con, config, stats, full=full, progress=progress)
     except BaseException:

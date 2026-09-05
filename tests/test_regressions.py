@@ -15,6 +15,7 @@ import os
 import stat
 import subprocess
 import sqlite3
+import time
 import sys
 import tempfile
 import unicodedata
@@ -228,6 +229,52 @@ class TestWhatTheResultSays(CliCase):
             con.close()
         self.assertGreater(len(lines), 1)
         self.assertEqual(len(set(lines)), len(lines), f"chunks share a line: {lines[:8]}")
+
+
+class TestPathologicalShapes(CliCase):
+    """Corpora that are ordinary to own and hostile to a line-oriented splitter."""
+
+    def test_one_enormous_line_does_not_freeze_a_query(self):
+        # A minified bundle, a generated JSON blob, one very long log line: all
+        # are a single "section", and handing FTS5 a multi-megabyte chunk made
+        # snippet() spend minutes on a query that should take milliseconds.
+        self.seed({"log.txt": "needle_y " * 200_000 + "\n",
+                   "ok.md": "# Ok\n\nneedle_y appears here too\n"})
+        self.cli("index", "-q", expect=0)
+
+        started = time.perf_counter()
+        found = self.hits("needle_y")
+        elapsed = time.perf_counter() - started
+
+        self.assertGreaterEqual(found["count"], 1, "the long-line document vanished")
+        self.assertLess(elapsed, 10, f"one query over a long-line corpus took {elapsed:.1f}s")
+
+        con = sqlite3.connect(self.db)
+        try:
+            widest = con.execute("SELECT max(length(body)) FROM chunks").fetchone()[0]
+        finally:
+            con.close()
+        self.assertLessEqual(widest, 4000, f"a chunk of {widest} chars escaped the ceiling")
+
+
+class TestAnOlderIndexIsRebuilt(CliCase):
+    def test_index_rebuilds_an_older_schema_instead_of_crashing(self):
+        # `find` tells the user to rebuild; the rebuild command itself must not
+        # be the thing that dies. The index is a cache - remaking it is free of
+        # consequences, every document is still on disk.
+        root = self.seed({"a.md": "# A\n\nalpha content\n"})
+        self.cli("index", "-q", expect=0)
+
+        con = sqlite3.connect(self.db)
+        con.execute("ALTER TABLE chunks DROP COLUMN title")   # the older shape
+        con.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('schema_version','1')")
+        con.commit()
+        con.close()
+
+        run = self.cli("index", expect=0)
+        self.assertNotIn("Traceback", run.stderr)
+        self.assertEqual(self.hits("alpha")["count"], 1, "the rebuilt index does not answer")
+        del root
 
 
 class TestFailureIsLoud(CliCase):
