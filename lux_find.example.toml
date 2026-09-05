@@ -1,0 +1,22 @@
+# Example configuration. `lux-find init <path> ...` writes one of these for
+# you; copy this file to `lux_find.toml` if you would rather write it by hand.
+
+[index]
+db = "~/.lux_find/index.sqlite"
+# Warn when the index has not been rebuilt in this many hours.
+stale_hours = 24
+
+[[source]]
+path = "~/notes"
+kind = "notes"
+include = ["*.md", "*.txt"]
+exclude = ["archive/**"]
+
+[[source]]
+path = "~/src/my-project"
+kind = "code"
+
+[[source]]
+path = "~/exports/chats"
+kind = "chat"
+include = ["*.jsonl", "conversations.json"]

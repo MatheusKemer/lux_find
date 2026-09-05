@@ -1,0 +1,79 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only by default: nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Check the standard library has FTS5
+        run: |
+          python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE VIRTUAL TABLE t USING fts5(body)'); print('fts5 ok', sqlite3.sqlite_version)"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Tests (pytest)
+        run: python -m pytest -q
+
+      - name: Tests (unittest, no pytest)
+        run: PYTHONPATH=src:tests python -m unittest discover -s tests -t tests
+
+      - name: Quickstart smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          mkdir -p "$work/notes"
+          printf '# Sync protocol\n\nA tombstone expires after ninety days.\n' > "$work/notes/design.md"
+          cd "$work"
+          lux-find init ./notes --db ./index.sqlite
+          lux-find index
+          lux-find find "tombstone expires"                       # set -e asserts exit 0
+          lux-find find "tombstone expires" --json | grep -q '"count": 1'
+          lux-find status
+          set +e
+          lux-find find "zzzqqqxxx wwwvvvuuu" >/dev/null 2>&1
+          test $? -eq 1 || { echo "expected exit 1 for a query with no hits"; exit 1; }
+          printf 'not a database' > ./index.sqlite
+          lux-find find "anything" >/dev/null 2>&1
+          test $? -eq 3 || { echo "expected exit 3 for a corrupt index"; exit 1; }
+          lux-find index --config ./absent.toml >/dev/null 2>&1
+          test $? -eq 2 || { echo "expected exit 2 for a missing config"; exit 1; }
+          echo "quickstart ok"
+
+  no-network:
+    name: no network code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The README promises there is no network code - enforce it
+        run: |
+          if grep -rnE '^[[:space:]]*(import|from)[[:space:]]+(socket|ssl|urllib|http|requests|httpx|aiohttp|xmlrpc|ftplib|smtplib|telnetlib)\b' src/; then
+            echo "network-capable import found in src/ - the README promises there is none"
+            exit 1
+          fi
+          echo "no network imports in src/"

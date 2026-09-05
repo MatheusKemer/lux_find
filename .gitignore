@@ -1,0 +1,32 @@
+# build artefacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# environments
+.venv/
+venv/
+env/
+
+# test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# never commit an index or a personal config
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+lux_find.toml
+
+# editors and platforms
+.DS_Store
+.idea/
+.vscode/
+
+# internal repo map, not part of the published project
+AGENTS.md

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lux_find - architecture</title>
+<meta name="description" content="Full-text search over the notes, code and chats you already have. One SQLite file, no server, no network.">
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#2d333b; --txt:#e6edf3; --dim:#8b949e;
+    --accent:#58a6ff; --good:#3fb950; --warn:#d29922;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);
+       font:16px/1.55 ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+       min-height:100vh;display:flex;flex-direction:column;align-items:center;
+       padding:40px 20px 64px}
+  header{text-align:center;max-width:820px;margin-bottom:34px}
+  h1{font-size:34px;font-weight:700;letter-spacing:-.5px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--dim);margin:12px 0 6px;font-size:15px}
+  .links{margin-top:16px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .links a{color:var(--accent);text-decoration:none;border:1px solid var(--line);
+           border-radius:99px;padding:7px 18px;font-size:14px}
+  .links a:hover{border-color:var(--accent)}
+  h2.section{font-size:14px;color:var(--dim);text-transform:uppercase;
+             letter-spacing:2px;margin:44px 0 18px;text-align:center;width:100%}
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;
+        justify-content:center;max-width:1400px}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+         padding:20px 18px;width:252px;display:flex;flex-direction:column;gap:10px}
+  .stage h3{font-size:16px}
+  .stage .what{color:var(--dim);font-size:13px}
+  .stage ul{list-style:none;font-size:13px;display:flex;flex-direction:column;gap:5px}
+  .stage li::before{content:"-";color:var(--accent);margin-right:7px}
+  .arrow{align-self:center;color:var(--accent);font-size:24px;padding:0 10px;user-select:none}
+  .grid{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;max-width:1100px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+        padding:18px 20px;width:340px;max-width:100%}
+  .card h3{font-size:15px;margin-bottom:8px}
+  .card p{color:var(--dim);font-size:13.5px}
+  table{border-collapse:collapse;font-size:13.5px;max-width:820px;width:100%}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left}
+  th{color:var(--dim);font-weight:600}
+  td b{color:var(--good)}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+      padding:16px 18px;overflow-x:auto;font-size:13px;max-width:820px;width:100%}
+  .mark{color:var(--warn)}
+  .note{color:var(--dim);font-size:13px;max-width:820px;margin-top:14px;text-align:center}
+  footer{color:var(--dim);font-size:12.5px;margin-top:52px;text-align:center}
+  footer a{color:var(--accent)}
+  @media (max-width:900px){.arrow{transform:rotate(90deg);padding:8px 0}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>lux_find</span></h1>
+  <p class="sub">
+    Full-text search over the notes, code and chats you already have.
+    One SQLite file. No server, no cloud, no dependencies.
+  </p>
+  <p class="sub">
+    The answer to "how did we decide that?" is almost always already on your
+    disk, and almost always unfindable.
+  </p>
+  <div class="links">
+    <a href="https://github.com/MatheusKemer/lux_find">Source</a>
+    <a href="https://github.com/MatheusKemer/lux_find#60-second-quickstart">Quickstart</a>
+    <a href="https://github.com/MatheusKemer/lux_find/blob/main/docs/CONNECTORS.md">Write a connector</a>
+    <a href="https://github.com/MatheusKemer/lux_find/blob/main/SECURITY.md">Privacy</a>
+  </div>
+</header>
+
+<h2 class="section">The pipeline</h2>
+
+<div class="flow">
+  <div class="stage">
+    <h3>Sources</h3>
+    <p class="what">whatever you already keep on disk</p>
+    <ul>
+      <li>markdown and plain-text notes</li>
+      <li>your own repositories</li>
+      <li>agent transcripts</li>
+      <li>chat data exports</li>
+      <li>declared in one small config</li>
+    </ul>
+  </div>
+  <div class="arrow">&rarr;</div>
+
+  <div class="stage">
+    <h3>Connectors</h3>
+    <p class="what">two methods, about thirty lines each</p>
+    <ul>
+      <li><b>scan</b>: what exists, has it changed</li>
+      <li><b>load</b>: give me the chunks</li>
+      <li>the split is what makes incremental indexing possible</li>
+      <li>add your own for e-mail, bookmarks, issues</li>
+    </ul>
+  </div>
+  <div class="arrow">&rarr;</div>
+
+  <div class="stage">
+    <h3>Process</h3>
+    <p class="what">into one searchable unit</p>
+    <ul>
+      <li>notes chunked by heading</li>
+      <li>code by sliding window with overlap</li>
+      <li>conversations one chunk per message</li>
+      <li>identical documents collapsed by hash</li>
+    </ul>
+  </div>
+  <div class="arrow">&rarr;</div>
+
+  <div class="stage">
+    <h3>Privacy</h3>
+    <p class="what">applied before the index, not before display</p>
+    <ul>
+      <li>credential files never opened</li>
+      <li>no network code anywhere</li>
+    </ul>
+  </div>
+  <div class="arrow">&rarr;</div>
+
+  <div class="stage">
+    <h3>Index &amp; query</h3>
+    <p class="what">one file, milliseconds</p>
+    <ul>
+      <li>SQLite FTS5, BM25 ranking</li>
+      <li>incremental by mtime and size</li>
+      <li>human output, or --json for agents</li>
+      <li>stale index warns, broken index exits 3</li>
+    </ul>
+  </div>
+</div>
+
+<h2 class="section">What it looks like</h2>
+
+<pre>$ lux-find find "why tombstone instead of hard delete"
+lux_find "why tombstone instead of hard delete" - 8 hits - 1.5 ms - confidence medium
+
+1. ~/exports/agent-session.jsonl:1  [chat] - today
+   user: <span class="mark">why</span> did we pick a <span class="mark">tombstone</span> <span class="mark">instead</span> of a <span class="mark">hard</span> <span class="mark">delete</span>?
+
+2. ~/notes/design/sync-protocol.md:17  [note] - today
+   ## Rejected alternative  We chose a <span class="mark">tombstone</span> <span class="mark">instead</span> of a <span class="mark">hard</span> <span class="mark">delete</span> because ...</pre>
+
+<h2 class="section">Performance</h2>
+
+<table>
+  <tr><th>corpus</th><th>index size</th><th>cold build</th><th>warm re-index</th><th>query median</th><th>p90</th></tr>
+  <tr><td>5,000 docs / 17,500 chunks</td><td>27 MB</td><td>0.8 s</td><td>0.14 s</td><td><b>23 ms</b></td><td>27 ms</td></tr>
+  <tr><td>20,000 docs / 70,000 chunks</td><td>109 MB</td><td>3.0 s</td><td>0.42 s</td><td><b>54 ms</b></td><td>61 ms</td></tr>
+</table>
+<p class="note">
+  Apple-silicon laptop, Python 3.12, SQLite 3.49, over a generated corpus of dense synthetic
+  prose - a deliberately unfriendly shape where every query term matches a large
+  fraction of the corpus. Real notes are more selective and usually faster. No
+  benchmark harness needed to check your own: <code>index</code> prints its elapsed
+  time, <code>find</code> prints the query time in its header, <code>status</code>
+  prints the index size.
+</p>
+
+<h2 class="section">Privacy model</h2>
+
+<div class="grid">
+  <div class="card">
+    <h3>Nothing leaves the machine</h3>
+    <p>
+      Not a promise - an absence. There is no HTTP client, no socket, no
+      telemetry and no update check in the package, and continuous integration
+      fails the build if one appears. Verify in ten seconds:
+      <code>grep -rnE '^\s*(import|from)\s+(socket|urllib|http|requests)\b' src/</code>
+    </p>
+  </div>
+</div>
+
+<footer>
+  MIT licensed.
+  <a href="https://github.com/MatheusKemer/lux_find">github.com/MatheusKemer/lux_find</a>
+  <br>
+  First shown at AI Tinkerers Curitiba, August 2026, as "Buscador Local: Salve Tudo".
+</footer>
+
+</body>
+</html>
