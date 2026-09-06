@@ -29,9 +29,12 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 
-__all__ = ["Hit", "SearchOutcome", "find", "tokens", "confidence"]
+__all__ = ["Hit", "SearchOutcome", "find", "tokens", "parse_query", "confidence"]
 
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
+# A quoted run is a phrase; a bare run is a word. Anything else is punctuation
+# and is thrown away, as it always was.
+_TERM = re.compile(r'"([^"]*)"|(\S+)', re.UNICODE)
 _ANCHOR_NAMES = {"readme", "index", "changelog", "contributing", "overview", "architecture"}
 
 TITLE_BOOST = 0.6
@@ -91,7 +94,7 @@ class SearchOutcome:
 
 
 def tokens(query: str, cap: int = 12) -> list[str]:
-    """Words worth searching for, capped so one paste cannot become a scan.
+    """The plain words in a query - what gets highlighted and boosted.
 
     The query is normalised the same way indexed text is: typed on a Mac, a
     Portuguese word can arrive decomposed (an "a" plus a combining cedilla)
@@ -103,11 +106,73 @@ def tokens(query: str, cap: int = 12) -> list[str]:
     return found[:cap]
 
 
-def _match_expr(toks: list[str]) -> str:
-    # OR is correct here *because* BM25 has IDF: a document matching only the
-    # common word scores far below one matching the rare word. AND would make
-    # every extra word a chance to return nothing.
-    return " OR ".join(f'"{t}"' for t in toks)
+def parse_query(query: str, cap: int = 12) -> list[tuple[str, str]]:
+    """Split a query into ``(kind, value)`` terms: phrase, prefix or word.
+
+    Three things a person types and expects to mean something:
+
+    * ``"tombstone expiry"`` - those two words, in that order, next to each
+      other. Quoting is the oldest search convention there is; ignoring it and
+      returning the loose-word results reads as a broken search engine.
+    * ``tombston*`` - anything starting with that. The star is the second
+      convention, and it was previously searched for literally, matching
+      nothing.
+    * ``tombstone`` - the word.
+
+    Everything else is punctuation and is dropped, exactly as before. The cap
+    on the number of terms stays: one pasted paragraph should not turn into a
+    scan of the whole index.
+    """
+    normalised = unicodedata.normalize("NFC", query)
+    terms: list[tuple[str, str]] = []
+
+    for quoted, bare in _TERM.findall(normalised):
+        if len(terms) >= cap:
+            break
+        if quoted:
+            words = [w.lower() for w in _WORD.findall(quoted)]
+            if len(words) > 1:
+                terms.append(("phrase", " ".join(words)))
+            elif words and len(words[0]) > 1:
+                # One quoted word is just that word. Same one-character rule as
+                # everywhere else: quoting does not make "a" worth searching.
+                terms.append(("word", words[0]))
+            continue
+
+        # A star only means "prefix" at the end of a word, which is where every
+        # other search box puts it. Elsewhere it is punctuation.
+        prefix = bare.endswith("*")
+        words = [w.lower() for w in _WORD.findall(bare)]
+        if not words:
+            continue
+        if prefix:
+            head, tail = words[:-1], words[-1]
+            terms.extend(("word", w) for w in head if len(w) > 1)
+            terms.append(("prefix", tail))
+        else:
+            terms.extend(("word", w) for w in words if len(w) > 1)
+
+    return terms[:cap]
+
+
+def _match_expr(terms: list[tuple[str, str]], *, require_all: bool = False) -> str:
+    """Build the FTS5 MATCH expression for a parsed query.
+
+    OR is the default *because* BM25 has IDF: a document matching only the
+    common word scores far below one matching the rare word, so an extra word
+    refines the ranking instead of risking an empty result. ``--all`` is there
+    for when you know every word is in the document and want only those.
+    """
+    parts = []
+    for kind, value in terms:
+        escaped = value.replace('"', '""')
+        if kind == "prefix":
+            parts.append(f'"{escaped}"*')
+        else:
+            # A phrase is already a quoted run of words: FTS5 reads
+            # "a b" as the two words adjacent, which is exactly the ask.
+            parts.append(f'"{escaped}"')
+    return (" AND " if require_all else " OR ").join(parts)
 
 
 def confidence(hits: list[Hit]) -> str:
@@ -133,11 +198,17 @@ def find(
     limit: int = 8,
     kinds: list[str] | None = None,
     pool: int = POOL,
+    require_all: bool = False,
 ) -> SearchOutcome:
     started = time.perf_counter()
-    toks = tokens(query)
-    if not toks:
+    terms = parse_query(query)
+    if not terms:
         return SearchOutcome(query=query, hits=[], ms=0.0, confidence="none", scanned=0)
+    # The words behind the terms, for highlighting and the title boost: a
+    # phrase contributes each of its words, a prefix the stem the user typed.
+    toks = []
+    for kind, value in terms:
+        toks.extend(value.split() if kind == "phrase" else [value])
 
     # Both filters belong in SQL. Applied afterwards they competed for the
     # same 500 candidate slots as everything else, so a corpus with enough
@@ -150,7 +221,7 @@ def find(
         "JOIN docs d ON d.id = c.doc_id "
         "WHERE chunk_fts MATCH ? AND d.dup_of IS NULL"
     )
-    params: list = [_match_expr(toks)]
+    params: list = [_match_expr(terms, require_all=require_all)]
     if kinds:
         sql += " AND d.kind IN (" + ",".join("?" * len(kinds)) + ")"
         params.extend(kinds)

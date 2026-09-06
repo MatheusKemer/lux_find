@@ -163,6 +163,7 @@ def cmd_find(args) -> int:
             args.query,
             limit=args.limit,
             kinds=args.kind or None,
+            require_all=args.all,
         )
     finally:
         con.close()
@@ -241,7 +242,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_find = subparsers.add_parser("find", parents=[common], help="search the index")
     p_find.add_argument(
         "query",
-        help="words to look for (put -- first if the query starts with a dash)",
+        help='words to look for; "quote a phrase" and end a word with * for a '
+             "prefix (put -- first if the query starts with a dash)",
     )
     p_find.add_argument("-n", "--limit", type=int, default=8, help="max results (default 8)")
     p_find.add_argument(
@@ -249,6 +251,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="restrict to a kind; repeat to allow several",
     )
     p_find.add_argument("--json", action="store_true", help="machine-readable output")
+    p_find.add_argument(
+        "-a", "--all", action="store_true",
+        help="require every term, instead of ranking documents that match any",
+    )
     p_find.add_argument("--why", action="store_true", help="show the score breakdown per hit")
     p_find.set_defaults(func=cmd_find)
 

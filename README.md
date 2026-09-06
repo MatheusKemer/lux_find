@@ -11,7 +11,7 @@ your editor stops at the current project.
 
 `lux_find` indexes all of it into one SQLite FTS5 database and answers in
 milliseconds. It is about 2,400 lines of standard-library Python — comments and
-docstrings included — with 133 tests and zero runtime dependencies. You can read
+docstrings included — with 139 tests and zero runtime dependencies. You can read
 all of it in an afternoon, which is the point: this is infrastructure you should
 be able to audit before pointing it at your private files.
 
@@ -103,7 +103,7 @@ are standing.
 ```
 lux-find init <path> [<path> ...] [--kind notes|code|chat] [--force]
 lux-find index [--full] [--force-prune] [-q|--quiet]
-lux-find find "<query>" [-n N] [-k notes|code|chat] [--json] [--why]
+lux-find find "<query>" [-n N] [-k notes|code|chat] [-a] [--json] [--why]
 lux-find status [--json]
 ```
 
@@ -119,6 +119,7 @@ Every command also takes `-c/--config <file>` and `--db <file>`, and
 | `index -q` | print only the machine-readable `SUMMARY` line |
 | `find -n` | maximum results, default 8 |
 | `find -k` | restrict to a kind; repeat the flag to allow several |
+| `find -a` | require every term, instead of ranking anything that matches |
 | `find --why` | print the score breakdown for every hit |
 
 `$NO_COLOR` disables colour, as does piping the output anywhere. If your query
@@ -287,11 +288,14 @@ real inverse document frequency, so a document matching only the rare word
 outranks one matching only the common word, and adding a word can never make
 the search return nothing.
 
-**Punctuation is not syntax.** The query is split into words, so FTS5 operators
-do not apply: `AND`, `OR`, `NOT` and `NEAR(...)` are searched as literal words,
-quoting does not create a phrase search, and `tombston*` does not do prefix
-matching — it looks for the word "tombston". Words of one character are dropped
-and at most 12 words are used.
+**Quote a phrase, star a prefix.** `"tombstone expiry"` matches those two words
+next to each other, in that order. `tombston*` matches any word starting with
+that. `--all` (`-a`) switches the whole query from "rank anything that matches"
+to "only documents containing every term".
+
+**Other punctuation is not syntax.** FTS5's own operators do not apply: `AND`,
+`OR`, `NOT` and `NEAR(...)` are searched as literal words. Words of one
+character are dropped, and at most 12 terms are used.
 
 **Accents fold, word forms do not.** `acao` finds `ação` and vice versa, and
 text is normalised so a decomposed accent typed on one machine matches a
@@ -381,8 +385,9 @@ Things this does not do, stated plainly so you can decide before installing:
   find "automobile") and neither do word forms. FTS5 indexes the words you
   actually wrote. In practice you type a word from the document, not a word
   about it.
-- **No phrase search, no prefix search, no boolean operators.** See *How queries
-  are matched* above.
+- **No boolean operators and no fuzzy matching.** Phrases and prefixes work;
+  `AND`/`OR`/`NEAR` do not, and neither does a typo. See *How queries are
+  matched* above.
 - **No PDFs, images, or office documents.** Text files only. A connector could
   add them; none ships.
 - **Files over 4 MB are not indexed.** They are counted and reported, not hidden.

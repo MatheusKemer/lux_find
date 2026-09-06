@@ -166,8 +166,12 @@ def render_human(
     wrap_width = _resolve_wrap_width(width)
     lines: list[str] = []
     collapsed_note = f" (+{outcome.collapsed} similar collapsed)" if outcome.collapsed else ""
+    # The query is echoed in quotes, unless the person already quoted a phrase -
+    # doubling them up reads as a typo in the tool.
+    shown = sanitize(outcome.query)
+    shown = shown if shown.startswith('"') and shown.endswith('"') else f'"{shown}"'
     header = (
-        f'{c["dim"]}lux_find "{sanitize(outcome.query)}" - {len(outcome.hits)} hits - '
+        f'{c["dim"]}lux_find {shown} - {len(outcome.hits)} hits - '
         f'{outcome.ms:.1f} ms - confidence {outcome.confidence}{collapsed_note}{c["reset"]}'
     )
     lines.append(header)

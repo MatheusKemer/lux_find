@@ -277,6 +277,52 @@ class TestAnOlderIndexIsRebuilt(CliCase):
         del root
 
 
+class TestQueriesMeanWhatPeopleType(CliCase):
+    """Quoting and a trailing star are the two oldest search conventions.
+
+    Both used to be stripped as punctuation, so a phrase search silently
+    returned the loose-word results and a prefix search returned nothing. A
+    search tool that ignores quotes reads as broken, whatever the docs say.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.seed({
+            "a.md": "# Cache\n\nThe distributed cache uses a ring buffer.\n",
+            "b.md": "# Notes\n\nWe distributed the work, and the cache came later.\n",
+            "c.md": "# Tomb\n\nA tombstone expires after ninety days.\n",
+        })
+        self.cli("index", "-q", expect=0)
+
+    def test_loose_words_still_match_any_document(self):
+        self.assertEqual(self.hits("distributed cache")["count"], 2)
+
+    def test_a_quoted_phrase_requires_the_words_together(self):
+        found = self.hits('"distributed cache"')
+        self.assertEqual(found["count"], 1, "a phrase matched documents that only share words")
+        self.assertTrue(found["hits"][0]["path"].endswith("a.md"))
+
+    def test_a_trailing_star_matches_by_prefix(self):
+        self.assertEqual(self.hits("tombston*")["count"], 1)
+        self.assertEqual(self.hits("zzzqq*")["count"], 0)
+
+    def test_all_requires_every_term(self):
+        self.assertEqual(self.hits("distributed tombstone")["count"], 3)
+        self.assertEqual(self.hits("distributed tombstone", "--all")["count"], 0)
+        self.assertEqual(self.hits("distributed cache", "--all")["count"], 2)
+
+    def test_the_echoed_query_is_not_double_quoted(self):
+        out = self.cli("find", '"distributed cache"', expect=0).stdout
+        self.assertNotIn('""', out)
+
+    def test_punctuation_alone_still_finds_nothing_and_does_not_crash(self):
+        for query in ('"', '""', "*", '"" *', "!!! ???", "a"):
+            with self.subTest(query=query):
+                proc = self.cli("find", query)
+                self.assertEqual(proc.returncode, 1, f"{query!r} -> {proc.stderr[:200]}")
+                self.assertNotIn("Traceback", proc.stderr)
+
+
 class TestFailureIsLoud(CliCase):
     def test_an_index_from_another_schema_exits_three(self):
         self.seed({"a.md": "# A\n\nalpha\n"})
