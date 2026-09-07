@@ -1,0 +1,77 @@
+name: release
+
+# Publishes to PyPI when a v* tag is pushed. There is no API token anywhere:
+# PyPI verifies a short-lived OIDC identity issued by GitHub for this exact
+# repository, workflow and environment (Trusted Publishing). Nothing to store,
+# nothing to rotate, nothing to leak.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The tag is the release's only source of truth for the version - a tag
+      # that disagrees with pyproject.toml would publish something nobody asked
+      # for, so it fails here instead of on PyPI, where a version is forever.
+      - name: Tag must match the packaged version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          packaged=$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          echo "tag=$tag packaged=$packaged"
+          test "$tag" = "$packaged"
+
+      - name: Tests must pass before anything is published
+        run: PYTHONPATH=src:tests python -m unittest discover -s tests -t tests
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      # A wheel that unpacks but does not run is a broken release. Install it
+      # into a clean environment and drive the CLI the way a stranger would.
+      # `init` writes its config into the working directory, so this runs from a
+      # scratch directory - never the checkout, which already carries one.
+      - name: Installed wheel answers a real search
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --quiet "$(ls dist/*.whl)"
+          mkdir -p /tmp/smoke-work/notes
+          cd /tmp/smoke-work
+          printf '# Ring buffer\n\nThe distributed cache uses a ring buffer.\n' > notes/a.md
+          /tmp/smoke/bin/lux-find init ./notes --db ./i.sqlite
+          /tmp/smoke/bin/lux-find index --db ./i.sqlite
+          /tmp/smoke/bin/lux-find find "ring buffer" --db ./i.sqlite --json | tee out.json
+          python -c 'import json,sys; d=json.load(open("out.json")); sys.exit(0 if d["count"] == 1 else 1)'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # the OIDC token PyPI checks; this is the whole credential
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

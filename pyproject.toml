@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "lux_find"
 version = "0.1.0"
 description = "Full-text search over the notes, code and chats you already have. No server, no cloud, no dependencies."
+authors = [{ name = "Matheus Kemer" }]
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -29,7 +30,8 @@ dev = ["pytest>=7"]
 lux-find = "lux_find.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/MatheusKemer/lux_find"
+Homepage = "https://matheuskemer.github.io/lux_find/"
+Repository = "https://github.com/MatheusKemer/lux_find"
 Issues = "https://github.com/MatheusKemer/lux_find/issues"
 
 [tool.setuptools.packages.find]
