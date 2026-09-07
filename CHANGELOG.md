@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 — 2026-09-07
+
+Documentation only; no code change.
+
+- The quickstart leads with `pip install lux_find`, the spelling the project
+  uses everywhere else, and says in one line that the hyphen installs the same
+  package. PyPI folds `_` and `-` into a single name, and its own page header
+  always renders the normalised form, so a reader seeing both spellings would
+  otherwise wonder which one is real.
+
 ## 0.2.0 — 2026-09-07
 
 First release on PyPI: `pip install lux-find`.
