@@ -45,8 +45,11 @@ lux_find "why tombstone instead of hard delete" - 8 hits - 1.5 ms - confidence m
 
 Requires Python 3.11 or newer. Nothing else.
 
+(`lux-find` with a hyphen installs the same package - PyPI treats `_`
+and `-` as the same name. The installed command is `lux-find`.)
+
 ```bash
-pip install lux-find                 # or: pipx install lux-find
+pip install lux_find                 # or: pipx install lux_find
 
 lux-find init ~/notes ~/src/my-project ~/exports
 lux-find index
