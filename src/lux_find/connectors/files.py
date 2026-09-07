@@ -24,14 +24,28 @@ MAX_FILE_BYTES = 4 * 1024 * 1024
 CREDENTIAL_NAMES = {
     "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials", "htpasswd",
     ".npmrc", ".pypirc", ".netrc", ".htpasswd",
+    # Whole-file credential stores that carry no telltale extension: a git
+    # credential store is plaintext user:password, and a kubeconfig embeds
+    # cluster tokens and client keys.
+    ".git-credentials", "git-credentials", "kubeconfig",
 }
-CREDENTIAL_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".asc")
+CREDENTIAL_SUFFIXES = (
+    ".pem", ".key", ".p12", ".pfx", ".keystore", ".jks", ".asc",
+    # .p8 is an Apple service key, .ppk a PuTTY private key - both are the
+    # private half, both are routinely left in a project folder.
+    ".p8", ".ppk",
+)
 
 # A file *named* after secrets is a store; a note *about* secrets is a note.
 # "secrets.yaml" is the first, "secrets-rotation.md" is the second, and the
 # difference has to survive: skipping the note would drop the user's own
 # writing from their index without ever saying so.
-SECRET_STEMS = ("secret", "secrets", "credential", "credentials")
+SECRET_STEMS = (
+    "secret", "secrets", "credential", "credentials",
+    # A cloud service-account file is a private key in JSON clothing; the name
+    # is the only warning it ever gives.
+    "service-account", "service_account", "serviceaccount",
+)
 SECRET_STORE_EXTS = {
     "", ".txt", ".yml", ".yaml", ".toml", ".json", ".jsonl", ".ini", ".conf", ".cfg",
 }

@@ -1,7 +1,14 @@
 # lux_find
 
+[![tests](https://github.com/MatheusKemer/lux_find/actions/workflows/tests.yml/badge.svg)](https://github.com/MatheusKemer/lux_find/actions/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![dependencies](https://img.shields.io/badge/runtime%20dependencies-0-brightgreen)](pyproject.toml)
+
 **Full-text search over the notes, code and chats you already have.
 One SQLite file. No server, no cloud, no dependencies.**
+
+📖 [Architecture walkthrough](https://matheuskemer.github.io/lux_find/)
 
 You have thousands of documents you wrote yourself: markdown notes, a few
 repositories, an exported conversation history with a coding agent. The answer
@@ -11,7 +18,7 @@ your editor stops at the current project.
 
 `lux_find` indexes all of it into one SQLite FTS5 database and answers in
 milliseconds. It is about 2,400 lines of standard-library Python — comments and
-docstrings included — with 139 tests and zero runtime dependencies. You can read
+docstrings included — with 150 tests and zero runtime dependencies. You can read
 all of it in an afternoon, which is the point: this is infrastructure you should
 be able to audit before pointing it at your private files.
 
@@ -36,13 +43,10 @@ lux_find "why tombstone instead of hard delete" - 8 hits - 1.5 ms - confidence m
 
 ## 60-second quickstart
 
-Requires Python 3.11 or newer. Nothing else. Not on PyPI yet, so install from
-the clone:
+Requires Python 3.11 or newer. Nothing else.
 
 ```bash
-git clone https://github.com/MatheusKemer/lux_find
-cd lux_find
-pip install .                        # or: pipx install .
+pip install lux-find                 # or: pipx install lux-find
 
 lux-find init ~/notes ~/src/my-project ~/exports
 lux-find index
@@ -54,11 +58,12 @@ looking at what is actually inside it. `index` builds `~/.lux_find/index.sqlite`
 `find` searches it. `status` tells you how fresh it is. That is the whole tool —
 four commands.
 
-Running from the clone without installing works too:
+Running from a clone, with or without installing, works too:
 
 ```bash
 git clone https://github.com/MatheusKemer/lux_find
 cd lux_find
+pip install .                        # or skip it and use PYTHONPATH:
 PYTHONPATH=src python3 -m lux_find init ~/notes
 PYTHONPATH=src python3 -m lux_find index
 PYTHONPATH=src python3 -m lux_find find "hello"
@@ -122,8 +127,9 @@ Every command also takes `-c/--config <file>` and `--db <file>`, and
 | `find -a` | require every term, instead of ranking anything that matches |
 | `find --why` | print the score breakdown for every hit |
 
-`$NO_COLOR` disables colour, as does piping the output anywhere. If your query
-starts with a dash, put `--` before it.
+`$NO_COLOR` disables colour, as does piping the output anywhere. A query that
+starts with a dash is searched as written — `lux-find find -hello` looks for
+`-hello` — and `--` before it still works if you prefer to be explicit.
 
 ---
 
@@ -152,8 +158,10 @@ issue tracker export — is about thirty lines. See
 Some files are deliberately not indexed:
 
 - files whose **name** says they exist to hold a credential (`.env` and
-  friends, `id_rsa`, `*.pem`, `*.key`, `.netrc`, `credentials.json`,
-  `secrets.yaml` — including with an extension glued on, like `id_rsa.bak`);
+  friends, `id_rsa`, `*.pem`, `*.key`, `*.p8`, `*.ppk`, `.netrc`, `kubeconfig`,
+  a git credential store, a cloud service-account JSON, `secrets.yaml` —
+  including with an extension glued on, like `id_rsa.bak`). A note *about*
+  secrets is not one: `secrets-rotation.md` stays in your index;
 - files larger than **4 MB**, empty files, and files that sniff as binary;
 - anything matched by an `exclude` pattern (`.git/**`, `node_modules/**`,
   `dist/**` and similar are excluded by default).
@@ -234,6 +242,25 @@ The object around `hits` carries `query`, `count`, `ms`, `confidence`,
 `candidates`, `collapsed`, `db`, `built_at`, `age_hours` and `stale`. `--json`
 writes nothing but JSON to stdout — warnings go to stderr — so it is safe to
 pipe, including when the query matched nothing.
+
+**`--json` stays JSON when the command fails**, including on exit `2` and `3`.
+The failure object carries `error`, `exit_code` and usually `hint`:
+
+```console
+$ lux-find find alpha --db /gone.sqlite --json; echo "exit=$?"
+{"error": "no index at /gone.sqlite", "exit_code": 3, "hint": "run `lux-find index` to (re)build it; delete the file to start over."}
+exit=3
+```
+
+It deliberately has **no `count` and no `hits`**. A caller doing
+`result["count"]` raises instead of reading a zero nobody measured — a failure
+that looks like an empty result set is worse than one that crashes the caller,
+because nobody ever investigates it.
+
+**A query that starts with a dash is a query.** `lux-find find -hello` searches
+for `-hello`; it is not parsed as flags. `--` still works if you prefer to be
+explicit. And `--limit` refuses anything below `1` rather than returning an
+empty list for a query that has hits.
 
 A ready-made hook is in [examples/](examples/): a short shell wrapper that
 consults the index before the agent answers, plus the Claude Code settings

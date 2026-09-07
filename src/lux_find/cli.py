@@ -42,9 +42,34 @@ EXIT_NO_HITS = 1
 EXIT_USAGE = 2
 EXIT_INDEX = 3
 
+# Set once from argv, before parsing, so that a failure *inside* argparse - a
+# bad flag, an unparsable --limit - can still answer in JSON. A caller that
+# asked for JSON and got a bare stderr line has to parse English to find out
+# what happened, which is the thing --json exists to avoid.
+_json_mode = False
+
 
 def _err(message: str) -> None:
     print(f"lux-find: {message}", file=sys.stderr)
+
+
+def _fail(message: str, *, code: int, hint: str | None = None) -> int:
+    """Report a failure on both channels and return the exit code.
+
+    The JSON object deliberately carries no ``count`` and no ``hits``. A caller
+    doing ``result["count"]`` raises instead of reading a zero that was never
+    measured - an error that looks like an empty result set is worse than an
+    error that crashes the caller, because nobody ever investigates it.
+    """
+    _err(message)
+    if hint:
+        _err(hint)
+    if _json_mode:
+        payload: dict[str, object] = {"error": message, "exit_code": code}
+        if hint:
+            payload["hint"] = hint
+        print(json.dumps(payload, ensure_ascii=False))
+    return code
 
 
 def _config_candidates(explicit: str | None) -> list[Path]:
@@ -118,8 +143,15 @@ def cmd_index(args) -> int:
 
     force_pruned = 0
     if args.force_prune:
-        force_pruned = force_prune(config)
-        progress(f"force-prune removed {force_pruned} documents whose file is gone")
+        try:
+            force_pruned = force_prune(config)
+        except IndexMissing:
+            # Pruning an index that does not exist yet is not an error, it is a
+            # no-op: there is nothing stale to drop. Refusing here would make
+            # --force-prune a flag you can only use on the second run.
+            progress("nothing to force-prune yet: no index; building it now")
+        else:
+            progress(f"force-prune removed {force_pruned} documents whose file is gone")
 
     stats = build(config, full=args.full, progress=progress)
     # Anything a human is told on stderr has to be in the machine-readable
@@ -208,8 +240,90 @@ def cmd_status(args) -> int:
 
 # ---------------------------------------------------------------------- parser
 
+class _Parser(argparse.ArgumentParser):
+    """An ArgumentParser whose usage errors honour ``--json``."""
+
+    def error(self, message: str):  # noqa: D102 - argparse hook
+        self.print_usage(sys.stderr)
+        _fail(
+            message,
+            code=EXIT_USAGE,
+            hint=f"see `{self.prog} --help`",
+        )
+        raise SystemExit(EXIT_USAGE)
+
+
+def _positive_int(raw: str) -> int:
+    """A result limit below 1 is a request for nothing, not a small request."""
+    try:
+        value = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{raw!r} is not a whole number")
+    if value < 1:
+        # Python slices negatives from the end, so -1 quietly returned an empty
+        # list for a query with real hits - a wrong answer wearing the clothes
+        # of a right one.
+        raise argparse.ArgumentTypeError(f"must be 1 or more, got {value}")
+    return value
+
+
+# Flags of `find`, split by whether they consume the token after them.
+_FIND_LONG_FLAGS = {"--config", "--db", "--limit", "--kind", "--json", "--all", "--why", "--help"}
+_FIND_LONG_VALUE_FLAGS = {"--config", "--db", "--limit", "--kind"}
+_FIND_SHORT_VALUE = set("cnk")
+_FIND_SHORT_BOOL = set("ah")
+
+
+def _looks_like_flag(token: str) -> bool:
+    if token.startswith("--"):
+        return token.split("=", 1)[0] in _FIND_LONG_FLAGS
+    body = token[1:]
+    if not body:
+        return False
+    if body[0] in _FIND_SHORT_VALUE:
+        return True  # -n, -n8, -kcode
+    # A bundle is only a bundle if every letter in it is a real flag. That is
+    # what separates `-ah` from `-hello`, which is a query.
+    return all(char in _FIND_SHORT_BOOL for char in body)
+
+
+def _protect_dash_query(argv: list[str]) -> list[str]:
+    """Move a dash-leading query behind a ``--`` at the end of the line.
+
+    `lux-find find -hello` used to be swallowed by argparse's short-option
+    bundling: it printed the help text and exited 0, so a script saw a success
+    with no results and concluded the corpus had nothing. A query is data, not
+    a flag, and the only positional `find` takes is the query.
+
+    The query travels to the end because ``--`` stops flag parsing for the whole
+    rest of the line: inserting it in place would turn every later ``--db`` into
+    another positional.
+    """
+    try:
+        start = argv.index("find") + 1
+    except ValueError:
+        return argv
+
+    index = start
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            return argv  # the caller already said where the data starts
+        if _looks_like_flag(token):
+            takes_value = (
+                token in _FIND_LONG_VALUE_FLAGS
+                or (not token.startswith("--") and token[1:] in _FIND_SHORT_VALUE)
+            )
+            index += 2 if takes_value else 1
+            continue
+        if token.startswith("-"):
+            return argv[:index] + argv[index + 1:] + ["--", token]
+        return argv  # an ordinary query; nothing to protect
+    return argv
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="lux-find",
         description="Full-text search over the notes, code and chats "
         "you already have on disk. No server, no cloud, no network calls.",
@@ -245,7 +359,9 @@ def build_parser() -> argparse.ArgumentParser:
         help='words to look for; "quote a phrase" and end a word with * for a '
              "prefix (put -- first if the query starts with a dash)",
     )
-    p_find.add_argument("-n", "--limit", type=int, default=8, help="max results (default 8)")
+    p_find.add_argument(
+        "-n", "--limit", type=_positive_int, default=8, help="max results (default 8)",
+    )
     p_find.add_argument(
         "-k", "--kind", action="append", choices=["notes", "code", "chat"],
         help="restrict to a kind; repeat to allow several",
@@ -277,8 +393,13 @@ def main(argv: list[str] | None = None) -> int:
             except (ValueError, OSError) as exc:  # pragma: no cover - platform specific
                 print(f"lux-find: could not set output encoding: {exc}", file=sys.stderr)
 
+    global _json_mode
+    raw = list(sys.argv[1:] if argv is None else argv)
+    _json_mode = "--json" in raw
+    raw = _protect_dash_query(raw)
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
     if not getattr(args, "command", None):
         parser.print_help()
         return EXIT_USAGE
@@ -286,35 +407,33 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except ConfigError as exc:
-        _err(str(exc))
-        return EXIT_USAGE
+        return _fail(str(exc), code=EXIT_USAGE)
     except IndexBusy as exc:
-        _err(str(exc))
-        return EXIT_USAGE
+        return _fail(str(exc), code=EXIT_USAGE)
     except (IndexMissing, IndexCorrupt) as exc:
-        _err(str(exc))
-        _err("run `lux-find index` to (re)build it; delete the file to start over.")
-        return EXIT_INDEX
+        return _fail(
+            str(exc),
+            code=EXIT_INDEX,
+            hint="run `lux-find index` to (re)build it; delete the file to start over.",
+        )
     except PruneGuardTripped as exc:
-        _err(str(exc))
-        return EXIT_USAGE
+        return _fail(str(exc), code=EXIT_USAGE)
     except LuxFindError as exc:
-        _err(str(exc))
-        return EXIT_INDEX
+        return _fail(str(exc), code=EXIT_INDEX)
     except FileNotFoundError as exc:
-        _err(str(exc))
-        return EXIT_USAGE
+        return _fail(str(exc), code=EXIT_USAGE)
     except PermissionError as exc:
         # Sandboxes, restricted home directories and read-only volumes all land
         # here. A traceback would bury the one useful fact: which path was denied.
-        _err(f"permission denied: {exc}")
-        _err("pick a writable location with --db, or set it in [index] db = ...")
-        return EXIT_USAGE
+        return _fail(
+            f"permission denied: {exc}",
+            code=EXIT_USAGE,
+            hint="pick a writable location with --db, or set it in [index] db = ...",
+        )
     except BrokenPipeError:  # `lux-find find x | head`
         return EXIT_OK
     except KeyboardInterrupt:
-        _err("interrupted")
-        return EXIT_USAGE
+        return _fail("interrupted", code=EXIT_USAGE)
 
 
 if __name__ == "__main__":

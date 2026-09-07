@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lux_find"
-version = "0.1.0"
+version = "0.2.0"
 description = "Full-text search over the notes, code and chats you already have. No server, no cloud, no dependencies."
 authors = [{ name = "Matheus Kemer" }]
 readme = "README.md"
